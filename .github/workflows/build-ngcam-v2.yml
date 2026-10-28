@@ -37,7 +37,7 @@ jobs:
           echo "cfb6650043835837e0f89ed2565c3f9df331b8e8f967a61366fe56c5f56f1087  original.apk" | sha256sum -c
           echo "be6a58b98182cdef192cb29850f3d384b4f80fb9cf15d621f7503927354cc449  source.zip" | sha256sum -c
       - name: Decode original APK
-        run: apktool d -f original.apk -o decoded
+        run: apktool d -f -r original.apk -o decoded
       - name: Apply experimental 4K bitrate cap
         shell: bash
         run: |
