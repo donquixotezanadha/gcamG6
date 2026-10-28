@@ -40,107 +40,160 @@ jobs:
           echo "be6a58b98182cdef192cb29850f3d384b4f80fb9cf15d621f7503927354cc449  source.zip" | sha256sum -c
           echo "Baseline APK and source archive checksums verified." | tee patch-report.txt
 
-      - name: Decode APK with resources
-        run: apktool d -f original.apk -o decoded
+      - name: Decode APK while preserving original resources
+        run: apktool d -f -r original.apk -o decoded
 
-      - name: Apply Lite UI, defaults, and non-immersive system bars
+      - name: Apply Lite UI, default camera tuning, and visible system bars
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import re
-          import xml.etree.ElementTree as ET
 
           root = Path("decoded")
           report = []
 
-          # Keep stock/basic camera settings and the Device Model, Noise Modeler,
-          # and Black Level screens. Remove the requested mod-only controls.
-          pref = root / "res/xml/camera_preferences.xml"
-          if not pref.exists():
-              raise SystemExit("camera_preferences.xml missing after resource decode")
-          android = "{http://schemas.android.com/apk/res/android}"
-          ET.register_namespace("android", "http://schemas.android.com/apk/res/android")
-          tree = ET.parse(pref)
-          xmlroot = tree.getroot()
-          remove_keys = {
-              "pref_category_exposure_comp",  # manual exposure compensation
-              "screen_aemode_key",             # ISO / exposure-time controls
-              "pref_shasta_key",               # Shasta factor
-              "pref_focus_settings_key",       # manual focus / focus extras
-              "lib_group_key",                 # Lib Patcher and all lens submenus
-              "pref_frames_key",               # HDR+ Enhanced Frames
-          }
-          removed = {k: 0 for k in remove_keys}
-          def prune(parent):
-              for child in list(parent):
-                  key = child.get(android + "key", "")
-                  if key in remove_keys:
-                      parent.remove(child)
-                      removed[key] += 1
-                  else:
-                      prune(child)
-          prune(xmlroot)
-          missing = [k for k, n in removed.items() if n != 1]
-          if missing:
-              raise SystemExit("Expected exactly one settings node for each target; counts=" + repr(removed))
-          tree.write(pref, encoding="utf-8", xml_declaration=True)
-          report.append("Removed settings: " + ", ".join(sorted(remove_keys)))
+          # 1) Hide only the requested mod-specific settings from the settings UI.
+          # Resource table/XML remains byte-for-byte original; removal is done
+          # against PreferenceGroups after camera_preferences is inflated.
+          ehf = root / "smali/ehf.smali"
+          s = ehf.read_text(encoding="utf-8")
+          if "applyLiteUi()V" in s:
+              raise SystemExit("Lite UI patch already present in ehf.smali")
+          inflate = "    invoke-virtual {v0, v3}, Lehf;->addPreferencesFromResource(I)V"
+          if s.count(inflate) != 1:
+              raise SystemExit(f"Expected one preference inflation call, found {s.count(inflate)}")
+          s = s.replace(inflate, inflate + "\n\n    invoke-direct {p0}, Lehf;->applyLiteUi()V", 1)
+          s += """
 
-          # Set defaults used on a clean install: Pixel 3 XL model (value 7),
-          # Google IMX363 Noise Modeler on rear/front, and Black Level 65 rear/front.
-          defaults = {
-              "pref_model_back_key": "7",
-              "pref_model_front_key": "7",
-              "pref_noise_modeler_main_key": "IMX363_GOOGLE",
-              "pref_noise_modeler_front_key": "IMX363_GOOGLE",
-              "pref_noise_modeler_toggle_back_key": "true",
-              "pref_noise_modeler_toggle_front_key": "true",
-              "pref_blacklevel_back_key": "65",
-              "pref_blacklevel_front_key": "65",
-          }
-          nodes = {}
-          def collect(el):
-              key = el.get(android + "key")
-              if key in defaults:
-                  nodes.setdefault(key, []).append(el)
-              for child in el:
-                  collect(child)
-          collect(xmlroot)
-          for key, value in defaults.items():
-              matches = nodes.get(key, [])
-              if len(matches) != 1:
-                  raise SystemExit(f"Expected exactly one preference {key}, found {len(matches)}")
-              matches[0].set(android + "defaultValue", value)
-          tree.write(pref, encoding="utf-8", xml_declaration=True)
-          report.append("Defaults set: " + ", ".join(f"{k}={v}" for k, v in defaults.items()))
+          .method private final removeLitePreference(Landroid/preference/PreferenceGroup;Ljava/lang/String;)V
+              .locals 1
+              invoke-virtual {p1, p2}, Landroid/preference/PreferenceGroup;->findPreference(Ljava/lang/CharSequence;)Landroid/preference/Preference;
+              move-result-object v0
+              if-eqz v0, :lite_remove_done
+              invoke-virtual {p1, v0}, Landroid/preference/PreferenceGroup;->removePreference(Landroid/preference/Preference;)Z
+              :lite_remove_done
+              return-void
+          .end method
 
-          # Theme-level fullscreen flags can hide Android status/navigation bars.
-          patched_styles = 0
-          for style_file in (root / "res").glob("values*/*.xml"):
-              text = style_file.read_text(encoding="utf-8")
-              for style_name in ("Theme.Camera", "Theme.CameraSettings"):
-                  pattern = re.compile(r'(<style\b(?=[^>]*\bname="' + re.escape(style_name) + r'")[^>]*>)(.*?)(</style>)', re.S)
-                  def patch_style(m):
-                      body, n = re.subn(r'(<item\s+name="android:windowFullscreen">)true(</item>)', r'\g<1>false\2', m.group(2), count=1)
-                      if n:
-                          nonlocal_dummy[0] += 1
-                      return m.group(1) + body + m.group(3)
-                  nonlocal_dummy = [0]
-                  text = pattern.sub(patch_style, text)
-                  if nonlocal_dummy[0]:
-                      style_file.write_text(text, encoding="utf-8")
-                      patched_styles += nonlocal_dummy[0]
-                      report.append(f"{style_file}: {style_name} windowFullscreen=false")
-          if patched_styles < 2:
-              raise SystemExit(f"Expected to disable fullscreen in camera and settings themes; patched {patched_styles} style entries")
+          .method private final applyLiteUi()V
+              .locals 3
+              invoke-virtual {p0}, Lehf;->getPreferenceScreen()Landroid/preference/PreferenceScreen;
+              move-result-object v0
+              if-eqz v0, :lite_ui_done
 
-          # The camera also applies SYSTEM_UI_FLAG_FULLSCREEN at runtime (0x705).
-          # Clear that initial flag set so Android system bars remain visible.
+              const-string v1, "pref_category_advanced"
+              invoke-virtual {v0, v1}, Landroid/preference/PreferenceGroup;->findPreference(Ljava/lang/CharSequence;)Landroid/preference/Preference;
+              move-result-object v1
+              if-eqz v1, :lite_ui_resolution
+              check-cast v1, Landroid/preference/PreferenceGroup;
+              const-string v2, "pref_category_nikita"
+              invoke-virtual {v1, v2}, Landroid/preference/PreferenceGroup;->findPreference(Ljava/lang/CharSequence;)Landroid/preference/Preference;
+              move-result-object v2
+              if-eqz v2, :lite_ui_resolution
+              check-cast v2, Landroid/preference/PreferenceGroup;
+
+              const-string v1, "pref_category_exposure_comp"
+              invoke-direct {p0, v2, v1}, Lehf;->removeLitePreference(Landroid/preference/PreferenceGroup;Ljava/lang/String;)V
+              const-string v1, "screen_aemode_key"
+              invoke-direct {p0, v2, v1}, Lehf;->removeLitePreference(Landroid/preference/PreferenceGroup;Ljava/lang/String;)V
+              const-string v1, "pref_shasta_key"
+              invoke-direct {p0, v2, v1}, Lehf;->removeLitePreference(Landroid/preference/PreferenceGroup;Ljava/lang/String;)V
+              const-string v1, "pref_focus_settings_key"
+              invoke-direct {p0, v2, v1}, Lehf;->removeLitePreference(Landroid/preference/PreferenceGroup;Ljava/lang/String;)V
+
+              :lite_ui_resolution
+              const-string v1, "pref_category_resolution_camera"
+              invoke-virtual {v0, v1}, Landroid/preference/PreferenceGroup;->findPreference(Ljava/lang/CharSequence;)Landroid/preference/Preference;
+              move-result-object v1
+              if-eqz v1, :lite_ui_done
+              check-cast v1, Landroid/preference/PreferenceGroup;
+              const-string v2, "lib_group_key"
+              invoke-direct {p0, v1, v2}, Lehf;->removeLitePreference(Landroid/preference/PreferenceGroup;Ljava/lang/String;)V
+              const-string v2, "pref_frames_key"
+              invoke-direct {p0, v1, v2}, Lehf;->removeLitePreference(Landroid/preference/PreferenceGroup;Ljava/lang/String;)V
+
+              :lite_ui_done
+              return-void
+          .end method
+          """
+          ehf.write_text(s, encoding="utf-8")
+          report.append("Lite UI: hide Lib Patcher, HDR+ Enhanced Frames, Exposure Compensation, ISO/Exposure Time, Shasta Factor, and manual-focus options.")
+
+          # 2) Apply the selected model/noise/black-level defaults once at camera
+          # startup, before camera tuning reads the shared preferences.
+          fix = root / "smali_classes2/com/FixBSG.smali"
+          fs = fix.read_text(encoding="utf-8")
+          if "applyLiteDefaults()V" in fs:
+              raise SystemExit("Lite defaults patch already present in FixBSG.smali")
+          fs += """
+
+          .method public static applyLiteDefaults()V
+              .locals 4
+              invoke-static {}, Landroid/app/AppGlobals;->getInitialApplication()Landroid/app/Application;
+              move-result-object v0
+              if-eqz v0, :lite_defaults_done
+              invoke-static {v0}, Landroid/preference/PreferenceManager;->getDefaultSharedPreferences(Landroid/content/Context;)Landroid/content/SharedPreferences;
+              move-result-object v0
+              const-string v1, "ngcam_lite_ui_defaults_v3_applied"
+              const/4 v2, 0x0
+              invoke-interface {v0, v1, v2}, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String;Z)Z
+              move-result v2
+              if-nez v2, :lite_defaults_done
+              invoke-interface {v0}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+              move-result-object v1
+
+              const-string v2, "pref_model_back_key"
+              const-string v3, "7"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_model_front_key"
+              const-string v3, "7"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+
+              const-string v2, "pref_noise_modeler_main_key"
+              const-string v3, "IMX363_GOOGLE"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_noise_modeler_front_key"
+              const-string v3, "IMX363_GOOGLE"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+
+              const-string v2, "pref_noise_modeler_toggle_back_key"
+              const/4 v3, 0x1
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_noise_modeler_toggle_front_key"
+              const/4 v3, 0x1
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+
+              const-string v2, "pref_blacklevel_back_key"
+              const-string v3, "65"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_blacklevel_front_key"
+              const-string v3, "65"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+
+              const-string v2, "ngcam_lite_ui_defaults_v3_applied"
+              const/4 v3, 0x1
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+              invoke-interface {v1}, Landroid/content/SharedPreferences$Editor;->apply()V
+              :lite_defaults_done
+              return-void
+          .end method
+          """
+          fix.write_text(fs, encoding="utf-8")
+          report.append("Defaults: Pixel 3 XL model 7 front/rear; Google IMX363 Noise Modeler enabled front/rear; Black Level 65 front/rear (applied once).")
+
+          # Call defaults as early as possible in the camera activity lifecycle.
+          activity = root / "smali/com/google/android/apps/camera/legacy/app/activity/main/CameraActivity.smali"
+          a = activity.read_text(encoding="utf-8")
+          super_call = "    invoke-super {p0, p1}, Ldwg;->onCreate(Landroid/os/Bundle;)V"
+          if a.count(super_call) != 1:
+              raise SystemExit(f"Expected one CameraActivity onCreate super call, found {a.count(super_call)}")
+          a = a.replace(super_call, super_call + "\n    invoke-static {}, Lcom/FixBSG;->applyLiteDefaults()V", 1)
+          activity.write_text(a, encoding="utf-8")
+          report.append("Defaults initializer called from CameraActivity.onCreate.")
+
+          # 3) Disable immersive/fullscreen flags on the camera window.
           jve = root / "smali/jve.smali"
-          if not jve.exists():
-              raise SystemExit("Runtime system UI class smali/jve.smali not found")
           s = jve.read_text(encoding="utf-8")
           method = ".method public static a(Landroid/view/Window;)V"
           start = s.find(method)
@@ -149,35 +202,34 @@ jobs:
               raise SystemExit("Window system-UI method boundary not found")
           block = s[start:end]
           if block.count("const/16 v1, 0x705") != 1:
-              raise SystemExit("Expected exactly one 0x705 immersive/layout flag constant in jve window method")
+              raise SystemExit("Expected one 0x705 system-UI flag constant")
           block = block.replace("const/16 v1, 0x705", "const/4 v1, 0x0", 1)
+          set_ui = "    invoke-virtual {v0, v1}, Landroid/view/View;->setSystemUiVisibility(I)V"
+          if block.count(set_ui) != 1:
+              raise SystemExit("Expected one setSystemUiVisibility call in window helper")
+          block = block.replace(set_ui, set_ui + "\n\n    const/16 v1, 0x400\n    invoke-virtual {p0, v1}, Landroid/view/Window;->clearFlags(I)V", 1)
           jve.write_text(s[:start] + block + s[end:], encoding="utf-8")
-          report.append("Runtime window UI flags: 0x705 -> 0x0")
+          report.append("Immersive mode: clear decor visibility flags and Window FLAG_FULLSCREEN so status/navigation bars can remain visible.")
 
-          # Preserve Build 2's experimental 4K bitrate cap; this is not a 4K
-          # force-close fix, only a controlled baseline for this Lite UI build.
+          # 4) Keep Build 2's experimental 4K bitrate cap as-is for this UI-only build.
           lng = root / "smali/lng.smali"
-          if not lng.exists():
-              raise SystemExit("CamcorderProfile conversion class smali/lng.smali not found")
           s = lng.read_text(encoding="utf-8")
           method = ".method public static a(Landroid/media/CamcorderProfile;)Llnf;"
           start = s.find(method)
-          if start < 0:
-              raise SystemExit("Target CamcorderProfile conversion method not found")
           end = s.find(".end method", start)
-          if end < 0:
-              raise SystemExit("Target method boundary not found")
+          if start < 0 or end < 0:
+              raise SystemExit("Target CamcorderProfile conversion method not found")
           block = s[start:end]
           if "ngcam_v2_bitrate_skip" in block:
               raise SystemExit("4K bitrate patch already present in baseline")
           if ".locals 2" not in block:
-              raise SystemExit("Unexpected CamcorderProfile register layout; refusing unsafe patch")
+              raise SystemExit("Unexpected CamcorderProfile register layout")
           needle = "    iget v1, p0, Landroid/media/CamcorderProfile;->videoBitRate:I"
           if block.count(needle) != 1:
               raise SystemExit("Expected one videoBitRate read in CamcorderProfile conversion")
           block = block.replace(".locals 2", ".locals 4", 1)
           inject = needle + """
-              # Keep Build 2 experiment: cap UHD/4K profile bitrate at 40 Mbps.
+              # Build 2 experiment: cap UHD/4K profile bitrate at 40 Mbps.
               iget v2, p0, Landroid/media/CamcorderProfile;->videoFrameWidth:I
               const/16 v3, 0xf00
               if-lt v2, v3, :ngcam_v2_bitrate_skip
@@ -187,19 +239,8 @@ jobs:
               :ngcam_v2_bitrate_skip"""
           block = block.replace(needle, inject, 1)
           lng.write_text(s[:start] + block + s[end:], encoding="utf-8")
-          report.append("Preserved Build 2 4K experiment: max profile bitrate 40,000,000 bps for width >= 3840.")
+          report.append("4K: retained experimental 40 Mbps cap for UHD profiles; force-close remains unresolved.")
 
-          # Apktool 2.10 decodes several opaque platform animation resources as
-          # APKTOOL_DUMMY_* = false, which aapt cannot recompile. Preserve the
-          # resource IDs but use the valid null reference for these placeholders.
-          for name in ("anims.xml", "animators.xml"):
-              p = root / "res/values" / name
-              if p.exists():
-                  text = p.read_text(encoding="utf-8")
-                  text, count = re.subn(r'(<item\s+type="(?:anim|animator)"\s+name="APKTOOL_DUMMY_[^"]+">)false(</item>)', r'\g<1>@null\g<2>', text)
-                  if count:
-                      p.write_text(text, encoding="utf-8")
-                      report.append(f"{name}: normalized {count} Apktool dummy animation placeholders to @null")
           Path("patch-report.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
           print("\n".join(report))
           PY
