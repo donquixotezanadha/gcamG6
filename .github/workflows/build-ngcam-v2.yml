@@ -196,11 +196,11 @@ jobs:
               p = root / "res/values" / name
               if p.exists():
                   text = p.read_text(encoding="utf-8")
-                  text, count = re.subn(r'(<item\\s+type="(?:anim|animator)"\\s+name="APKTOOL_DUMMY_[^"]+">)false(</item>)', r'\\g<1>@null\\g<2>', text)
+                  text, count = re.subn(r'(<item\s+type="(?:anim|animator)"\\s+name="APKTOOL_DUMMY_[^"]+">)false(</item>)', r'\g<1>@null\g<2>', text)
                   if count:
                       p.write_text(text, encoding="utf-8")
                       report.append(f"{name}: normalized {count} Apktool dummy animation placeholders to @null")
-          Path("patch-report.txt").write_text("\\n".join(report) + "\\n", encoding="utf-8")
+          Path("patch-report.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
           print("\n".join(report))
           PY
 
