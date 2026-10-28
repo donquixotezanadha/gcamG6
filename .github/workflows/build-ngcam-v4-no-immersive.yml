@@ -5,7 +5,7 @@ on:
     branches:
       - build-4-no-immersive
     paths:
-      - .github/workflows/build-ngcam-v2.yml
+      - .github/workflows/build-ngcam-v4-no-immersive.yml
   workflow_dispatch:
 
 permissions:
@@ -96,7 +96,7 @@ jobs:
               out = []
               changed = False
               for line in lines:
-                  m = re.search(r'^(\\s*)invoke-virtual(?:/range)? \\{([^}]*)\\}, Landroid/view/View;->setSystemUiVisibility\\(I\\)V', line)
+                  m = re.search(r'^(\s*)invoke-virtual(?:/range)? \{([^}]*)\}, Landroid/view/View;->setSystemUiVisibility\(I\)V', line)
                   if m and not line.strip().startswith("#"):
                       regs = [x.strip() for x in m.group(2).split(",")]
                       if len(regs) == 2:
@@ -109,7 +109,7 @@ jobs:
                           continue
                   out.append(line)
               if changed:
-                  p.write_text("\\n".join(out) + "\\n", encoding="utf-8")
+                  p.write_text("\n".join(out) + "\n", encoding="utf-8")
 
           if patched_calls == 0:
               raise SystemExit("No View.setSystemUiVisibility calls found; refusing to produce an unpatched APK")
@@ -126,19 +126,19 @@ jobs:
           if "Window;->clearFlags(I)V" not in block:
               anchor = "    invoke-virtual {p0, v1}, Landroid/view/Window;->setFlags(II)V"
               if anchor in block:
-                  block = block.replace(anchor, anchor + "\\n    const/16 v1, 0x400\\n    invoke-virtual {p0, v1}, Landroid/view/Window;->clearFlags(I)V", 1)
+                  block = block.replace(anchor, anchor + "\n    const/16 v1, 0x400\n    invoke-virtual {p0, v1}, Landroid/view/Window;->clearFlags(I)V", 1)
               else:
                   # Insert clearFlags before the helper returns, using v1 as its local scratch register.
                   ret = "    return-void"
                   if ret not in block:
                       raise SystemExit("No safe return anchor in central Window helper")
-                  block = block.replace(ret, "    const/16 v1, 0x400\\n    invoke-virtual {p0, v1}, Landroid/view/Window;->clearFlags(I)V\\n" + ret, 1)
+                  block = block.replace(ret, "    const/16 v1, 0x400\n    invoke-virtual {p0, v1}, Landroid/view/Window;->clearFlags(I)V\n" + ret, 1)
           s = s[:start] + block + s[end:]
           p.write_text(s, encoding="utf-8")
 
           report = Path("patch-report.txt")
           with report.open("a", encoding="utf-8") as f:
-              f.write(f"\\nBuild 4 only: disabled immersive UI flags at {patched_calls} View.setSystemUiVisibility call sites; clear Window.FLAG_FULLSCREEN in central helper.\\n")
+              f.write(f"\nBuild 4 only: disabled immersive UI flags at {patched_calls} View.setSystemUiVisibility call sites; clear Window.FLAG_FULLSCREEN in central helper.\n")
           print(f"Patched {patched_calls} system UI visibility call sites; no Lite UI/default tuning changes applied.")
           PY
 
