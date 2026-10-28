@@ -1,9 +1,9 @@
-name: NGCam Lite 2 V2 4K bitrate experiment
+name: NGCam Lite 2 Build 3 - Lite UI
 
 on:
   push:
     branches:
-      - v2-4k-bitrate-experiment
+      - build-3-lite-ui
     paths:
       - .github/workflows/build-ngcam-v2.yml
   workflow_dispatch:
@@ -14,12 +14,13 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Install Android build tools
         uses: android-actions/setup-android@v3
         with:
           packages: platform-tools build-tools;35.0.0
+
       - name: Install Apktool
         shell: bash
         run: |
@@ -28,7 +29,8 @@ jobs:
           sudo mv /tmp/apktool.jar /usr/local/lib/apktool.jar
           printf '#!/bin/sh\nexec java -jar /usr/local/lib/apktool.jar "$@"\n' | sudo tee /usr/local/bin/apktool >/dev/null
           sudo chmod +x /usr/local/bin/apktool
-      - name: Download original APK and source
+
+      - name: Download and verify Build 2 baseline
         shell: bash
         run: |
           set -euo pipefail
@@ -36,17 +38,128 @@ jobs:
           curl -fL --retry 3 "https://github.com/donquixotezanadha/gcamG6/releases/download/original-v1/NGCam.lite2_src.zip" -o source.zip
           echo "cfb6650043835837e0f89ed2565c3f9df331b8e8f967a61366fe56c5f56f1087  original.apk" | sha256sum -c
           echo "be6a58b98182cdef192cb29850f3d384b4f80fb9cf15d621f7503927354cc449  source.zip" | sha256sum -c
-      - name: Decode original APK
-        run: apktool d -f -r original.apk -o decoded
-      - name: Apply experimental 4K bitrate cap
+          echo "Baseline APK and source archive checksums verified." | tee patch-report.txt
+
+      - name: Decode APK with resources
+        run: apktool d -f original.apk -o decoded
+
+      - name: Apply Lite UI, defaults, and non-immersive system bars
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           import re
-          p = Path("decoded/smali/lng.smali")
-          s = p.read_text()
+          import xml.etree.ElementTree as ET
+
+          root = Path("decoded")
+          report = []
+
+          # Keep stock/basic camera settings and the Device Model, Noise Modeler,
+          # and Black Level screens. Remove the requested mod-only controls.
+          pref = root / "res/xml/camera_preferences.xml"
+          if not pref.exists():
+              raise SystemExit("camera_preferences.xml missing after resource decode")
+          android = "{http://schemas.android.com/apk/res/android}"
+          ET.register_namespace("android", "http://schemas.android.com/apk/res/android")
+          tree = ET.parse(pref)
+          xmlroot = tree.getroot()
+          remove_keys = {
+              "pref_category_exposure_comp",  # manual exposure compensation
+              "screen_aemode_key",             # ISO / exposure-time controls
+              "pref_shasta_key",               # Shasta factor
+              "pref_focus_settings_key",       # manual focus / focus extras
+              "lib_group_key",                 # Lib Patcher and all lens submenus
+              "pref_frames_key",               # HDR+ Enhanced Frames
+          }
+          removed = {k: 0 for k in remove_keys}
+          def prune(parent):
+              for child in list(parent):
+                  key = child.get(android + "key", "")
+                  if key in remove_keys:
+                      parent.remove(child)
+                      removed[key] += 1
+                  else:
+                      prune(child)
+          prune(xmlroot)
+          missing = [k for k, n in removed.items() if n != 1]
+          if missing:
+              raise SystemExit("Expected exactly one settings node for each target; counts=" + repr(removed))
+          tree.write(pref, encoding="utf-8", xml_declaration=True)
+          report.append("Removed settings: " + ", ".join(sorted(remove_keys)))
+
+          # Set defaults used on a clean install: Pixel 3 XL model (value 7),
+          # Google IMX363 Noise Modeler on rear/front, and Black Level 65 rear/front.
+          defaults = {
+              "pref_model_back_key": "7",
+              "pref_model_front_key": "7",
+              "pref_noise_modeler_main_key": "IMX363_GOOGLE",
+              "pref_noise_modeler_front_key": "IMX363_GOOGLE",
+              "pref_noise_modeler_toggle_back_key": "true",
+              "pref_noise_modeler_toggle_front_key": "true",
+              "pref_blacklevel_back_key": "65",
+              "pref_blacklevel_front_key": "65",
+          }
+          nodes = {}
+          def collect(el):
+              key = el.get(android + "key")
+              if key in defaults:
+                  nodes.setdefault(key, []).append(el)
+              for child in el:
+                  collect(child)
+          collect(xmlroot)
+          for key, value in defaults.items():
+              matches = nodes.get(key, [])
+              if len(matches) != 1:
+                  raise SystemExit(f"Expected exactly one preference {key}, found {len(matches)}")
+              matches[0].set(android + "defaultValue", value)
+          tree.write(pref, encoding="utf-8", xml_declaration=True)
+          report.append("Defaults set: " + ", ".join(f"{k}={v}" for k, v in defaults.items()))
+
+          # Theme-level fullscreen flags can hide Android status/navigation bars.
+          patched_styles = 0
+          for style_file in (root / "res").glob("values*/*.xml"):
+              text = style_file.read_text(encoding="utf-8")
+              for style_name in ("Theme.Camera", "Theme.CameraSettings"):
+                  pattern = re.compile(r'(<style\b(?=[^>]*\bname="' + re.escape(style_name) + r'")[^>]*>)(.*?)(</style>)', re.S)
+                  def patch_style(m):
+                      body, n = re.subn(r'(<item\s+name="android:windowFullscreen">)true(</item>)', r'\g<1>false\2', m.group(2), count=1)
+                      if n:
+                          nonlocal_dummy[0] += 1
+                      return m.group(1) + body + m.group(3)
+                  nonlocal_dummy = [0]
+                  text = pattern.sub(patch_style, text)
+                  if nonlocal_dummy[0]:
+                      style_file.write_text(text, encoding="utf-8")
+                      patched_styles += nonlocal_dummy[0]
+                      report.append(f"{style_file}: {style_name} windowFullscreen=false")
+          if patched_styles < 2:
+              raise SystemExit(f"Expected to disable fullscreen in camera and settings themes; patched {patched_styles} style entries")
+
+          # The camera also applies SYSTEM_UI_FLAG_FULLSCREEN at runtime (0x705).
+          # Clear that initial flag set so Android system bars remain visible.
+          jve = root / "smali/jve.smali"
+          if not jve.exists():
+              raise SystemExit("Runtime system UI class smali/jve.smali not found")
+          s = jve.read_text(encoding="utf-8")
+          method = ".method public static a(Landroid/view/Window;)V"
+          start = s.find(method)
+          end = s.find(".end method", start)
+          if start < 0 or end < 0:
+              raise SystemExit("Window system-UI method boundary not found")
+          block = s[start:end]
+          if block.count("const/16 v1, 0x705") != 1:
+              raise SystemExit("Expected exactly one 0x705 immersive/layout flag constant in jve window method")
+          block = block.replace("const/16 v1, 0x705", "const/4 v1, 0x0", 1)
+          jve.write_text(s[:start] + block + s[end:], encoding="utf-8")
+          report.append("Runtime window UI flags: 0x705 -> 0x0")
+
+          # Preserve Build 2's experimental 4K bitrate cap; this is not a 4K
+          # force-close fix, only a controlled baseline for this Lite UI build.
+          lng = root / "smali/lng.smali"
+          if not lng.exists():
+              raise SystemExit("CamcorderProfile conversion class smali/lng.smali not found")
+          s = lng.read_text(encoding="utf-8")
           method = ".method public static a(Landroid/media/CamcorderProfile;)Llnf;"
           start = s.find(method)
           if start < 0:
@@ -56,16 +169,15 @@ jobs:
               raise SystemExit("Target method boundary not found")
           block = s[start:end]
           if "ngcam_v2_bitrate_skip" in block:
-              raise SystemExit("Patch already applied")
+              raise SystemExit("4K bitrate patch already present in baseline")
           if ".locals 2" not in block:
-              raise SystemExit("Unexpected local-register layout; refusing unsafe patch")
+              raise SystemExit("Unexpected CamcorderProfile register layout; refusing unsafe patch")
           needle = "    iget v1, p0, Landroid/media/CamcorderProfile;->videoBitRate:I"
           if block.count(needle) != 1:
-              raise SystemExit(f"Expected one videoBitRate read, found {block.count(needle)}")
+              raise SystemExit("Expected one videoBitRate read in CamcorderProfile conversion")
           block = block.replace(".locals 2", ".locals 4", 1)
           inject = needle + """
-          
-              # Experimental V2: cap only UHD/4K profile bitrate at 40 Mbps.
+              # Keep Build 2 experiment: cap UHD/4K profile bitrate at 40 Mbps.
               iget v2, p0, Landroid/media/CamcorderProfile;->videoFrameWidth:I
               const/16 v3, 0xf00
               if-lt v2, v3, :ngcam_v2_bitrate_skip
@@ -74,36 +186,47 @@ jobs:
               move v1, v3
               :ngcam_v2_bitrate_skip"""
           block = block.replace(needle, inject, 1)
-          s = s[:start] + block + s[end:]
-          p.write_text(s)
-          print("Patched CamcorderProfile conversion: width >= 3840, video bitrate max 40,000,000 bps.")
+          lng.write_text(s[:start] + block + s[end:], encoding="utf-8")
+          report.append("Preserved Build 2 4K experiment: max profile bitrate 40,000,000 bps for width >= 3840.")
+
+          Path("patch-report.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+          print("\n".join(report))
           PY
+
       - name: Build APK
         run: apktool b decoded -o unsigned.apk
-      - name: Align and sign APK
+
+      - name: Align, sign, and verify APK
         shell: bash
         run: |
           set -euo pipefail
-          keytool -genkeypair -keystore test-signing.jks -storepass ngcamv2temp -keypass ngcamv2temp -alias ngcamv2 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=NGCam V2 Experimental"
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 unsigned.apk NGCam-Lite2-V2-4K-bitrate-experiment-aligned.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign --ks test-signing.jks --ks-pass pass:ngcamv2temp --key-pass pass:ngcamv2temp --out NGCam-Lite2-V2-4K-bitrate-experiment.apk NGCam-Lite2-V2-4K-bitrate-experiment-aligned.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose NGCam-Lite2-V2-4K-bitrate-experiment.apk
-          sha256sum NGCam-Lite2-V2-4K-bitrate-experiment.apk > SHA256SUMS.txt
-          {
-            echo "NGCam Lite 2 V2 experimental build"
-            echo "Patch: cap CamcorderProfile video bitrate to 40 Mbps when videoFrameWidth >= 3840."
-            echo "Purpose: test whether an excessive 4K profile bitrate contributes to MediaRecorder start failure."
-            echo "Caveat: experimental; not confirmed on LG G6 hardware. Signed with a new test key, so it cannot update an APK signed with the original key; uninstall the old package before installing only if you accept that."
-            echo
-            cat SHA256SUMS.txt
-          } > BUILD-NOTES.txt
-      - name: Upload experimental APK
+          keytool -genkeypair -keystore test-signing.jks -storepass ngcamv3temp -keypass ngcamv3temp -alias ngcamv3 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=NGCam Lite 2 Build 3"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 unsigned.apk NGCam-Lite2-Build3-LiteUI-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign --ks test-signing.jks --ks-pass pass:ngcamv3temp --key-pass pass:ngcamv3temp --out NGCam-Lite2-Build3-LiteUI.apk NGCam-Lite2-Build3-LiteUI-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose NGCam-Lite2-Build3-LiteUI.apk
+          sha256sum NGCam-Lite2-Build3-LiteUI.apk > SHA256SUMS.txt
+          stat -c 'APK size: %s bytes' NGCam-Lite2-Build3-LiteUI.apk | tee -a patch-report.txt
+          cat SHA256SUMS.txt >> patch-report.txt
+
+      - name: Upload Build 3 APK
         uses: actions/upload-artifact@v4
         with:
-          name: NGCam-Lite2-V2-4K-bitrate-experiment
+          name: NGCam-Lite2-Build3-LiteUI
           path: |
-            NGCam-Lite2-V2-4K-bitrate-experiment.apk
-            BUILD-NOTES.txt
+            NGCam-Lite2-Build3-LiteUI.apk
+            patch-report.txt
             SHA256SUMS.txt
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload diagnostics if build fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NGCam-Lite2-Build3-LiteUI-diagnostics
+          path: |
+            patch-report.txt
+            decoded/res/xml/camera_preferences.xml
+            decoded/res/values/styles.xml
+          if-no-files-found: warn
           retention-days: 14
