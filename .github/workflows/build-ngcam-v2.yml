@@ -63,7 +63,7 @@ jobs:
           inflate = "    invoke-virtual {v0, v3}, Lehf;->addPreferencesFromResource(I)V"
           if s.count(inflate) != 1:
               raise SystemExit(f"Expected one preference inflation call, found {s.count(inflate)}")
-          s = s.replace(inflate, inflate + "\n\n    invoke-direct {p0}, Lehf;->applyLiteUi()V", 1)
+          s = s.replace(inflate, inflate + "\n\n    invoke-direct/range {p0 .. p0}, Lehf;->applyLiteUi()V", 1)
           s += """
 
           .method private final removeLitePreference(Landroid/preference/PreferenceGroup;Ljava/lang/String;)V
