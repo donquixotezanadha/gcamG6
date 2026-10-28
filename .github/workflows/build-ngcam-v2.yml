@@ -189,7 +189,18 @@ jobs:
           lng.write_text(s[:start] + block + s[end:], encoding="utf-8")
           report.append("Preserved Build 2 4K experiment: max profile bitrate 40,000,000 bps for width >= 3840.")
 
-          Path("patch-report.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+          # Apktool 2.10 decodes several opaque platform animation resources as
+          # APKTOOL_DUMMY_* = false, which aapt cannot recompile. Preserve the
+          # resource IDs but use the valid null reference for these placeholders.
+          for name in ("anims.xml", "animators.xml"):
+              p = root / "res/values" / name
+              if p.exists():
+                  text = p.read_text(encoding="utf-8")
+                  text, count = re.subn(r'(<item\\s+type="(?:anim|animator)"\\s+name="APKTOOL_DUMMY_[^"]+">)false(</item>)', r'\\g<1>@null\\g<2>', text)
+                  if count:
+                      p.write_text(text, encoding="utf-8")
+                      report.append(f"{name}: normalized {count} Apktool dummy animation placeholders to @null")
+          Path("patch-report.txt").write_text("\\n".join(report) + "\\n", encoding="utf-8")
           print("\n".join(report))
           PY
 
