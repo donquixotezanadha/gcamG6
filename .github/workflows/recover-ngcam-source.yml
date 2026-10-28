@@ -1,0 +1,59 @@
+name: Recover NGCam Lite 2 source archive
+
+on:
+  push:
+    branches:
+      - recovery/ngcam-source-inspection
+    paths:
+      - .github/workflows/recover-ngcam-source.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download the published source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            "https://github.com/donquixotezanadha/gcamG6/releases/download/original-v1/NGCam.lite2_src.zip" \
+            --output NGCam.lite2_src.zip
+          echo "be6a58b98182cdef192cb29850f3d384b4f80fb9cf15d621f7503927354cc449  NGCam.lite2_src.zip" | sha256sum --check
+          unzip -t NGCam.lite2_src.zip
+      - name: Build source inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "Source: NGCam Lite 2 release original-v1"
+            echo "Expected SHA-256: be6a58b98182cdef192cb29850f3d384b4f80fb9cf15d621f7503927354cc449"
+            echo
+            echo "=== Archive entries ==="
+            unzip -Z1 NGCam.lite2_src.zip
+          } > source-inventory.txt
+          mkdir extracted
+          unzip -q NGCam.lite2_src.zip -d extracted
+          {
+            echo
+            echo "=== Relevant camera / build files ==="
+            find extracted -type f \( \
+              -iname '*.smali' -o -iname '*.xml' -o -iname '*.json' -o \
+              -iname '*.properties' -o -iname '*.gradle' -o -iname '*.kt' -o \
+              -iname '*.java' -o -iname '*.txt' \) \
+              | grep -Ei 'camera|video|codec|stream|capture|config|pref|manifest|build|smali' \
+              | head -n 20000 || true
+          } >> source-inventory.txt
+      - name: Upload recoverable source and inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: ngcam-lite2-source-recovery
+          path: |
+            NGCam.lite2_src.zip
+            source-inventory.txt
+          if-no-files-found: error
+          retention-days: 14
