@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Install Android build tools
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools,build-tools;35.0.0
       - name: Install Apktool
         shell: bash
         run: |
@@ -25,8 +27,6 @@ jobs:
           curl -fsSL https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -o /usr/local/lib/apktool.jar
           printf '#!/bin/sh\nexec java -jar /usr/local/lib/apktool.jar "$@"\n' | sudo tee /usr/local/bin/apktool >/dev/null
           sudo chmod +x /usr/local/bin/apktool
-          sudo apt-get update
-          sudo apt-get install -y zipalign
       - name: Download original APK and source
         shell: bash
         run: |
@@ -84,9 +84,9 @@ jobs:
         run: |
           set -euo pipefail
           keytool -genkeypair -keystore test-signing.jks -storepass ngcamv2temp -keypass ngcamv2temp -alias ngcamv2 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=NGCam V2 Experimental"
-          zipalign -f -p 4 unsigned.apk NGCam-Lite2-V2-4K-bitrate-experiment-aligned.apk
-          apksigner sign --ks test-signing.jks --ks-pass pass:ngcamv2temp --key-pass pass:ngcamv2temp --out NGCam-Lite2-V2-4K-bitrate-experiment.apk NGCam-Lite2-V2-4K-bitrate-experiment-aligned.apk
-          apksigner verify --verbose NGCam-Lite2-V2-4K-bitrate-experiment.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 unsigned.apk NGCam-Lite2-V2-4K-bitrate-experiment-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign --ks test-signing.jks --ks-pass pass:ngcamv2temp --key-pass pass:ngcamv2temp --out NGCam-Lite2-V2-4K-bitrate-experiment.apk NGCam-Lite2-V2-4K-bitrate-experiment-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose NGCam-Lite2-V2-4K-bitrate-experiment.apk
           sha256sum NGCam-Lite2-V2-4K-bitrate-experiment.apk > SHA256SUMS.txt
           {
             echo "NGCam Lite 2 V2 experimental build"
