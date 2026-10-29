@@ -1,0 +1,231 @@
+name: NGCam Lite 2 Build 6 - Stable Defaults (G6)
+
+on:
+  push:
+    branches:
+      - build-6-stable-defaults
+    paths:
+      - .github/workflows/build-ngcam-v6-stable-defaults.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Install Android build tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools build-tools;35.0.0
+
+      - name: Install Apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -o /tmp/apktool.jar
+          sudo mv /tmp/apktool.jar /usr/local/lib/apktool.jar
+          printf '#!/bin/sh\nexec java -jar /usr/local/lib/apktool.jar "$@"\n' | sudo tee /usr/local/bin/apktool >/dev/null
+          sudo chmod +x /usr/local/bin/apktool
+
+      - name: Download and verify original APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 "https://github.com/donquixotezanadha/gcamG6/releases/download/original-v1/NGCam.lite2.apk" -o original.apk
+          echo "cfb6650043835837e0f89ed2565c3f9df331b8e8f967a61366fe56c5f56f1087  original.apk" | sha256sum -c
+          echo "Baseline APK verified" | tee patch-report.txt
+
+      - name: Decode APK (preserve resources)
+        run: apktool d -f -r original.apk -o decoded
+
+      - name: Apply Stable Defaults + Immersive fix + 4K bitrate cap
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("decoded")
+          report = []
+
+          # ============================================================
+          # 1. Force critical defaults (Model + Noise Modeler + Black Level)
+          # ============================================================
+          fix = root / "smali_classes2/com/FixBSG.smali"
+          fs = fix.read_text(encoding="utf-8")
+          if "applyLiteDefaults()V" in fs:
+              raise SystemExit("Lite defaults already present")
+
+          fs += """
+          .method public static applyLiteDefaults()V
+              .locals 4
+              invoke-static {}, Landroid/app/AppGlobals;->getInitialApplication()Landroid/app/Application;
+              move-result-object v0
+              if-eqz v0, :done
+              invoke-static {v0}, Landroid/preference/PreferenceManager;->getDefaultSharedPreferences(Landroid/content/Context;)Landroid/content/SharedPreferences;
+              move-result-object v0
+              const-string v1, "ngcam_lite_v6_defaults_applied"
+              const/4 v2, 0x0
+              invoke-interface {v0, v1, v2}, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String;Z)Z
+              move-result v2
+              if-nez v2, :done
+              invoke-interface {v0}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+              move-result-object v1
+
+              # Model = Pixel 3 XL (7)
+              const-string v2, "pref_model_back_key"
+              const-string v3, "7"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_model_front_key"
+              const-string v3, "7"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+
+              # Noise Modeler = Google IMX363 (WAJIB aktif)
+              const-string v2, "pref_noise_modeler_main_key"
+              const-string v3, "IMX363_GOOGLE"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_noise_modeler_front_key"
+              const-string v3, "IMX363_GOOGLE"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_noise_modeler_toggle_back_key"
+              const/4 v3, 0x1
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_noise_modeler_toggle_front_key"
+              const/4 v3, 0x1
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)V
+
+              # Black Level = 65
+              const-string v2, "pref_blacklevel_back_key"
+              const-string v3, "65"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_blacklevel_front_key"
+              const-string v3, "65"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+
+              const-string v2, "ngcam_lite_v6_defaults_applied"
+              const/4 v3, 0x1
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+              invoke-interface {v1}, Landroid/content/SharedPreferences$Editor;->apply()V
+              :done
+              return-void
+          .end method
+          """
+          fix.write_text(fs, encoding="utf-8")
+          report.append("Defaults forced: Pixel 3 XL + IMX363_GOOGLE Noise Modeler (ON) + Black Level 65")
+
+          # Panggil defaults di CameraActivity.onCreate
+          activity = root / "smali/com/google/android/apps/camera/legacy/app/activity/main/CameraActivity.smali"
+          a = activity.read_text(encoding="utf-8")
+          super_call = "    invoke-super {p0, p1}, Ldwg;->onCreate(Landroid/os/Bundle;)V"
+          if a.count(super_call) != 1:
+              raise SystemExit("CameraActivity onCreate super call not found or duplicated")
+          a = a.replace(super_call, super_call + "\n    invoke-static {}, Lcom/FixBSG;->applyLiteDefaults()V", 1)
+          activity.write_text(a, encoding="utf-8")
+          report.append("Defaults applied early from CameraActivity.onCreate")
+
+          # ============================================================
+          # 2. Disable Immersive Mode (cara yang sudah sukses di Build 4)
+          # ============================================================
+          jve = root / "smali/jve.smali"
+          s = jve.read_text(encoding="utf-8")
+          method = ".method public static a(Landroid/view/Window;)V"
+          start = s.find(method)
+          end = s.find(".end method", start)
+          if start < 0 or end < 0:
+              raise SystemExit("Window helper method not found")
+          block = s[start:end]
+
+          # Ganti flag immersive 0x705 menjadi 0
+          if "const/16 v1, 0x705" in block:
+              block = block.replace("const/16 v1, 0x705", "const/4 v1, 0x0", 1)
+              report.append("Immersive flag 0x705 → 0")
+
+          # Clear FLAG_FULLSCREEN
+          set_ui = "    invoke-virtual {v0, v1}, Landroid/view/View;->setSystemUiVisibility(I)V"
+          if set_ui in block and "clearFlags" not in block:
+              block = block.replace(
+                  set_ui,
+                  set_ui + "\n    const/16 v1, 0x400\n    invoke-virtual {p0, v1}, Landroid/view/Window;->clearFlags(I)V",
+                  1
+              )
+              report.append("Window.FLAG_FULLSCREEN cleared")
+
+          s = s[:start] + block + s[end:]
+          jve.write_text(s, encoding="utf-8")
+
+          # ============================================================
+          # 3. Cap 4K bitrate 40 Mbps (untuk stabilitas video)
+          # ============================================================
+          lng = root / "smali/lng.smali"
+          s = lng.read_text(encoding="utf-8")
+          method = ".method public static a(Landroid/media/CamcorderProfile;)Llnf;"
+          start = s.find(method)
+          end = s.find(".end method", start)
+          if start < 0 or end < 0:
+              raise SystemExit("CamcorderProfile method not found")
+          block = s[start:end]
+
+          if "ngcam_v6_bitrate_skip" not in block:
+              if ".locals 2" not in block:
+                  raise SystemExit("Unexpected locals in CamcorderProfile method")
+              needle = "    iget v1, p0, Landroid/media/CamcorderProfile;->videoBitRate:I"
+              if block.count(needle) != 1:
+                  raise SystemExit("videoBitRate read not found exactly once")
+              block = block.replace(".locals 2", ".locals 4", 1)
+              inject = needle + """
+              # Cap 4K bitrate at 40 Mbps
+              iget v2, p0, Landroid/media/CamcorderProfile;->videoFrameWidth:I
+              const/16 v3, 0xf00
+              if-lt v2, v3, :ngcam_v6_bitrate_skip
+              const v3, 0x2625a00
+              if-le v1, v3, :ngcam_v6_bitrate_skip
+              move v1, v3
+              :ngcam_v6_bitrate_skip"""
+              block = block.replace(needle, inject, 1)
+              s = s[:start] + block + s[end:]
+              lng.write_text(s, encoding="utf-8")
+              report.append("4K bitrate capped at 40 Mbps")
+
+          Path("patch-report.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+          print("\n".join(report))
+          PY
+
+      - name: Build APK
+        run: apktool b decoded -o unsigned.apk
+
+      - name: Align and sign
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -keystore test-signing.jks -storepass ngcamv6temp -keypass ngcamv6temp -alias ngcamv6 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=NGCam Build 6 Stable Defaults G6"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 unsigned.apk NGCam-Lite2-Build6-StableDefaults-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign --ks test-signing.jks --ks-pass pass:ngcamv6temp --key-pass pass:ngcamv6temp --out NGCam-Lite2-Build6-StableDefaults.apk NGCam-Lite2-Build6-StableDefaults-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose NGCam-Lite2-Build6-StableDefaults.apk
+          sha256sum NGCam-Lite2-Build6-StableDefaults.apk > SHA256SUMS.txt
+          {
+            echo "NGCam Lite 2 - Build 6 Stable Defaults (LG G6 Android 9)"
+            echo "• Model: Pixel 3 XL"
+            echo "• Noise Modeler: Google IMX363 (forced ON front + rear)"
+            echo "• Black Level: 65"
+            echo "• System bars visible (immersive disabled)"
+            echo "• 4K bitrate capped 40 Mbps"
+            echo "• Settings UI TIDAK diubah (tetap utuh)"
+            echo "• Night Sight, Portrait, Video 4K tetap ada"
+            echo
+            cat SHA256SUMS.txt
+          } > BUILD-NOTES.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NGCam-Lite2-Build6-StableDefaults
+          path: |
+            NGCam-Lite2-Build6-StableDefaults.apk
+            BUILD-NOTES.txt
+            SHA256SUMS.txt
+            patch-report.txt
+          if-no-files-found: error
+          retention-days: 14
