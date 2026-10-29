@@ -95,7 +95,7 @@ jobs:
               invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
               const-string v2, "pref_noise_modeler_toggle_front_key"
               const/4 v3, 0x1
-              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)V
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
 
               # Black Level = 65
               const-string v2, "pref_blacklevel_back_key"
