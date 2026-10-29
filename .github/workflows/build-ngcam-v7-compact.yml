@@ -1,0 +1,299 @@
+name: NGCam Lite 2 Build 7 - Compact (G6)
+
+on:
+  push:
+    branches:
+      - build-7-compact
+    paths:
+      - .github/workflows/build-ngcam-v7-compact.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Install Android build tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools build-tools;35.0.0
+
+      - name: Install Apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -o /tmp/apktool.jar
+          sudo mv /tmp/apktool.jar /usr/local/lib/apktool.jar
+          printf '#!/bin/sh\nexec java -jar /usr/local/lib/apktool.jar "$@"\n' | sudo tee /usr/local/bin/apktool >/dev/null
+          sudo chmod +x /usr/local/bin/apktool
+
+      - name: Download and verify original APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 "https://github.com/donquixotezanadha/gcamG6/releases/download/original-v1/NGCam.lite2.apk" -o original.apk
+          echo "cfb6650043835837e0f89ed2565c3f9df331b8e8f967a61366fe56c5f56f1087  original.apk" | sha256sum -c
+          echo "Baseline verified" | tee patch-report.txt
+
+      - name: Decode APK (preserve resources)
+        run: apktool d -f -r original.apk -o decoded
+
+      - name: Apply Compact patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("decoded")
+          report = []
+
+          # ============================================================
+          # 1. Force critical defaults SETIAP KALI dibuka
+          # ============================================================
+          fix = root / "smali_classes2/com/FixBSG.smali"
+          fs = fix.read_text(encoding="utf-8")
+          if "applyLiteDefaults()V" in fs:
+              raise SystemExit("Lite defaults already present")
+
+          fs += """
+          .method public static applyLiteDefaults()V
+              .locals 4
+              invoke-static {}, Landroid/app/AppGlobals;->getInitialApplication()Landroid/app/Application;
+              move-result-object v0
+              if-eqz v0, :done
+              invoke-static {v0}, Landroid/preference/PreferenceManager;->getDefaultSharedPreferences(Landroid/content/Context;)Landroid/content/SharedPreferences;
+              move-result-object v0
+              invoke-interface {v0}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+              move-result-object v1
+
+              # Model = Pixel 3 XL
+              const-string v2, "pref_model_back_key"
+              const-string v3, "7"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_model_front_key"
+              const-string v3, "7"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+
+              # Noise Modeler = Google IMX363 (WAJIB ON)
+              const-string v2, "pref_noise_modeler_main_key"
+              const-string v3, "IMX363_GOOGLE"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_noise_modeler_front_key"
+              const-string v3, "IMX363_GOOGLE"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_noise_modeler_toggle_back_key"
+              const/4 v3, 0x1
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_noise_modeler_toggle_front_key"
+              const/4 v3, 0x1
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+
+              # Black Level = 65
+              const-string v2, "pref_blacklevel_back_key"
+              const-string v3, "65"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+              const-string v2, "pref_blacklevel_front_key"
+              const-string v3, "65"
+              invoke-interface {v1, v2, v3}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+
+              invoke-interface {v1}, Landroid/content/SharedPreferences$Editor;->apply()V
+              :done
+              return-void
+          .end method
+          """
+          fix.write_text(fs, encoding="utf-8")
+          report.append("Defaults forced EVERY launch: Pixel 3 XL + IMX363_GOOGLE ON + Black Level 65")
+
+          # Panggil di CameraActivity.onCreate
+          activity = root / "smali/com/google/android/apps/camera/legacy/app/activity/main/CameraActivity.smali"
+          a = activity.read_text(encoding="utf-8")
+          super_call = "    invoke-super {p0, p1}, Ldwg;->onCreate(Landroid/os/Bundle;)V"
+          if a.count(super_call) != 1:
+              raise SystemExit("CameraActivity onCreate super call not found")
+          a = a.replace(super_call, super_call + "\n    invoke-static {}, Lcom/FixBSG;->applyLiteDefaults()V", 1)
+          activity.write_text(a, encoding="utf-8")
+          report.append("Defaults called from CameraActivity.onCreate")
+
+          # ============================================================
+          # 2. Sembunyikan kategori Advanced (lebih compact)
+          # ============================================================
+          ehf = root / "smali/ehf.smali"
+          s = ehf.read_text(encoding="utf-8")
+          if "applyCompactUi()V" in s:
+              raise SystemExit("Compact UI already present")
+
+          inflate = "    invoke-virtual {v0, v3}, Lehf;->addPreferencesFromResource(I)V"
+          if s.count(inflate) != 1:
+              raise SystemExit(f"Expected 1 inflate call, found {s.count(inflate)}")
+
+          # Gunakan /range karena p0 bisa high register
+          s = s.replace(inflate, inflate + "\n\n    invoke-direct/range {p0 .. p0}, Lehf;->applyCompactUi()V", 1)
+
+          s += """
+          .method private applyCompactUi()V
+              .locals 3
+              invoke-virtual {p0}, Lehf;->getPreferenceScreen()Landroid/preference/PreferenceScreen;
+              move-result-object v0
+              if-eqz v0, :done
+
+              # Sembunyikan seluruh kategori Advanced
+              const-string v1, "pref_category_advanced"
+              invoke-virtual {v0, v1}, Landroid/preference/PreferenceGroup;->findPreference(Ljava/lang/CharSequence;)Landroid/preference/Preference;
+              move-result-object v1
+              if-eqz v1, :res
+              invoke-virtual {v0, v1}, Landroid/preference/PreferenceGroup;->removePreference(Landroid/preference/Preference;)Z
+
+              :res
+              # Juga sembunyikan Lib Patcher & Frames jika masih muncul
+              const-string v1, "pref_category_resolution_camera"
+              invoke-virtual {v0, v1}, Landroid/preference/PreferenceGroup;->findPreference(Ljava/lang/CharSequence;)Landroid/preference/Preference;
+              move-result-object v1
+              if-eqz v1, :done
+              check-cast v1, Landroid/preference/PreferenceGroup;
+
+              const-string v2, "lib_group_key"
+              invoke-virtual {v1, v2}, Landroid/preference/PreferenceGroup;->findPreference(Ljava/lang/CharSequence;)Landroid/preference/Preference;
+              move-result-object v2
+              if-eqz v2, :frames
+              invoke-virtual {v1, v2}, Landroid/preference/PreferenceGroup;->removePreference(Landroid/preference/Preference;)Z
+
+              :frames
+              const-string v2, "pref_frames_key"
+              invoke-virtual {v1, v2}, Landroid/preference/PreferenceGroup;->findPreference(Ljava/lang/CharSequence;)Landroid/preference/Preference;
+              move-result-object v2
+              if-eqz v2, :done
+              invoke-virtual {v1, v2}, Landroid/preference/PreferenceGroup;->removePreference(Landroid/preference/Preference;)Z
+
+              :done
+              return-void
+          .end method
+          """
+          ehf.write_text(s, encoding="utf-8")
+          report.append("Advanced category + Lib/Frames hidden for compact UI")
+
+          # ============================================================
+          # 3. Immersive fix – CARA YANG SUDAH SUKSES DI BUILD 4
+          # ============================================================
+          patched_calls = 0
+          for p in root.rglob("*.smali"):
+              s = p.read_text(encoding="utf-8")
+              lines = s.splitlines()
+              out = []
+              changed = False
+              for line in lines:
+                  m = re.search(r'^(\s*)invoke-virtual(?:/range)? \{([^}]*)\}, Landroid/view/View;->setSystemUiVisibility\(I\)V', line)
+                  if m and not line.strip().startswith("#"):
+                      regs = [x.strip() for x in m.group(2).split(",")]
+                      if len(regs) == 2:
+                          indent = m.group(1)
+                          view_reg, flag_reg = regs
+                          out.append(f"{indent}const/4 {flag_reg}, 0x0")
+                          out.append(f"{indent}invoke-virtual {{{view_reg}, {flag_reg}}}, Landroid/view/View;->setSystemUiVisibility(I)V")
+                          patched_calls += 1
+                          changed = True
+                          continue
+                  out.append(line)
+              if changed:
+                  p.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+          if patched_calls == 0:
+              raise SystemExit("No setSystemUiVisibility calls found")
+
+          # Clear FLAG_FULLSCREEN di helper pusat
+          jve = root / "smali/jve.smali"
+          s = jve.read_text(encoding="utf-8")
+          method = ".method public static a(Landroid/view/Window;)V"
+          start = s.find(method)
+          end = s.find(".end method", start)
+          if start < 0 or end < 0:
+              raise SystemExit("Window helper not found")
+          block = s[start:end]
+          if "Window;->clearFlags(I)V" not in block:
+              anchor = "    invoke-virtual {p0, v1}, Landroid/view/Window;->setFlags(II)V"
+              if anchor in block:
+                  block = block.replace(anchor, anchor + "\n    const/16 v1, 0x400\n    invoke-virtual {p0, v1}, Landroid/view/Window;->clearFlags(I)V", 1)
+              else:
+                  ret = "    return-void"
+                  if ret not in block:
+                      raise SystemExit("No return anchor in Window helper")
+                  block = block.replace(ret, "    const/16 v1, 0x400\n    invoke-virtual {p0, v1}, Landroid/view/Window;->clearFlags(I)V\n" + ret, 1)
+          s = s[:start] + block + s[end:]
+          jve.write_text(s, encoding="utf-8")
+          report.append(f"Immersive disabled (Build 4 method): {patched_calls} setSystemUiVisibility calls forced to 0 + FLAG_FULLSCREEN cleared")
+
+          # ============================================================
+          # 4. Cap 4K bitrate
+          # ============================================================
+          lng = root / "smali/lng.smali"
+          s = lng.read_text(encoding="utf-8")
+          method = ".method public static a(Landroid/media/CamcorderProfile;)Llnf;"
+          start = s.find(method)
+          end = s.find(".end method", start)
+          if start < 0 or end < 0:
+              raise SystemExit("CamcorderProfile method not found")
+          block = s[start:end]
+          if "ngcam_v7_bitrate_skip" not in block:
+              if ".locals 2" not in block:
+                  raise SystemExit("Unexpected locals")
+              needle = "    iget v1, p0, Landroid/media/CamcorderProfile;->videoBitRate:I"
+              if block.count(needle) != 1:
+                  raise SystemExit("videoBitRate not found")
+              block = block.replace(".locals 2", ".locals 4", 1)
+              inject = needle + """
+              iget v2, p0, Landroid/media/CamcorderProfile;->videoFrameWidth:I
+              const/16 v3, 0xf00
+              if-lt v2, v3, :ngcam_v7_bitrate_skip
+              const v3, 0x2625a00
+              if-le v1, v3, :ngcam_v7_bitrate_skip
+              move v1, v3
+              :ngcam_v7_bitrate_skip"""
+              block = block.replace(needle, inject, 1)
+              s = s[:start] + block + s[end:]
+              lng.write_text(s, encoding="utf-8")
+              report.append("4K bitrate capped at 40 Mbps")
+
+          Path("patch-report.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+          print("\n".join(report))
+          PY
+
+      - name: Build APK
+        run: apktool b decoded -o unsigned.apk
+
+      - name: Align and sign
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -keystore test-signing.jks -storepass ngcamv7temp -keypass ngcamv7temp -alias ngcamv7 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=NGCam Build 7 Compact G6"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 unsigned.apk NGCam-Lite2-Build7-Compact-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign --ks test-signing.jks --ks-pass pass:ngcamv7temp --key-pass pass:ngcamv7temp --out NGCam-Lite2-Build7-Compact.apk NGCam-Lite2-Build7-Compact-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose NGCam-Lite2-Build7-Compact.apk
+          sha256sum NGCam-Lite2-Build7-Compact.apk > SHA256SUMS.txt
+          {
+            echo "NGCam Lite 2 - Build 7 Compact (LG G6)"
+            echo "• Model: Pixel 3 XL (forced every launch)"
+            echo "• Noise Modeler: Google IMX363 ON (forced every launch)"
+            echo "• Black Level: 65 (forced)"
+            echo "• Advanced menu hidden"
+            echo "• System bars visible (Build 4 method)"
+            echo "• 4K bitrate capped 40 Mbps"
+            echo "• Night Sight / Portrait / Video 4K retained"
+            echo
+            cat SHA256SUMS.txt
+          } > BUILD-NOTES.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NGCam-Lite2-Build7-Compact
+          path: |
+            NGCam-Lite2-Build7-Compact.apk
+            BUILD-NOTES.txt
+            SHA256SUMS.txt
+            patch-report.txt
+          if-no-files-found: error
+          retention-days: 14
