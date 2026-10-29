@@ -140,7 +140,7 @@ jobs:
           if s.count(inflate) != 1:
               raise SystemExit(f"Expected 1 inflate call, found {s.count(inflate)}")
 
-          s = s.replace(inflate, inflate + "\n\n    invoke-direct {p0}, Lehf;->applyLiteUiSafe()V", 1)
+          s = s.replace(inflate, inflate + "\n\n    invoke-direct/range {p0 .. p0}, Lehf;->applyLiteUiSafe()V", 1)
 
           s += """
           .method private applyLiteUiSafe()V
