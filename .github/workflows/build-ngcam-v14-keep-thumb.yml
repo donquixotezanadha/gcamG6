@@ -54,7 +54,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          OUT=NGCam-Lite2-Build14-Keep-Thumb
+          OUT=NGCam-Lite2-Build14b-Keep-Thumb
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 unsigned.apk $OUT-aligned.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
             --ks patches/ngcam-g6.jks --ks-pass pass:ngcamg6keep --key-pass pass:ngcamg6keep \
@@ -74,9 +74,9 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NGCam-Lite2-Build14-Keep-Thumb
+          name: NGCam-Lite2-Build14b-Keep-Thumb
           path: |
-            NGCam-Lite2-Build14-Keep-Thumb.apk
+            NGCam-Lite2-Build14b-Keep-Thumb.apk
             BUILD-NOTES.txt
             SHA256SUMS.txt
           if-no-files-found: error

@@ -424,7 +424,7 @@ GALLERY_HELPER = """
     :ngcam_busy
     # Photo still processing: open the newest FINISHED photo right away (what
     # the thumbnail shows). Only if there is none, tell the user and wait.
-    iget-object v1, p0, Lczy;->j:Landroid/content/Context;
+    iget-object v1, p0, Lczy;->q:Landroid/app/Activity;
     invoke-static {v1}, Lngcamthumb;->openLatest(Landroid/content/Context;)Z
     move-result v1
     if-nez v1, :ngcam_waiting
@@ -928,7 +928,11 @@ THUMB_CLASS = """
     invoke-direct {v2, v3}, Landroid/content/Intent;-><init>(Ljava/lang/String;)V
     const-string v3, "image/*"
     invoke-virtual {v2, v1, v3}, Landroid/content/Intent;->setDataAndType(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;
+    const/4 v3, 0x1
+    instance-of v4, p0, Landroid/app/Activity;
+    if-nez v4, :ol_flags
     const v3, 0x10000001
+    :ol_flags
     invoke-virtual {v2, v3}, Landroid/content/Intent;->addFlags(I)Landroid/content/Intent;
     invoke-virtual {p0, v2}, Landroid/content/Context;->startActivity(Landroid/content/Intent;)V
 
