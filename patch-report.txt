@@ -1,4 +1,4 @@
-NGCam Lite 2 - Build 15 (clean settings, HDR+ on, AWB off)
+NGCam Lite 2 - Build 16 (More tab hidden)
 - 4K video bitrate capped at 40 Mbps (width >= 3840)
 - Immersive mode off (4 setSystemUiVisibility sites + FLAG_FULLSCREEN cleared)
 - Status bar black on camera screen
@@ -10,6 +10,7 @@ NGCam Lite 2 - Build 15 (clean settings, HDR+ on, AWB off)
 - Per-frame CaptureResult logging (APi2 info) disabled
 - Thumbnail keeps the previous photo while HDR runs; it changes only when processing is done (stock-camera behaviour)
 - Thumbnail tap while HDR runs opens the gallery at once on the newest finished photo (no in-app preview, no waiting)
+- Mode switcher: the "More" tab is hidden
 - Settings: Lib Patcher, HDR+ Enhanced Frames and Camera photo resolution removed
 - HDR+ control off (HDR+ always on, no On/Enhanced selector); Google AWB off
 - Third-party gallery mode forced ON and portraits saved to DCIM/Camera (no separate album)
