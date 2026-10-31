@@ -64,7 +64,7 @@ jobs:
           {
             cat patch-report.txt
             echo
-            echo "Base: Build 15 + the More tab of the mode switcher is hidden.
+            echo "Base: Build 15 + the More tab of the mode switcher is hidden."
             echo "Signed with the FIXED key patches/ngcam-g6.jks, so later builds update this one in place."
             echo "First install of this build still needs the old APK uninstalled (different signing key)."
             echo
