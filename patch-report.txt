@@ -1,0 +1,13 @@
+NGCam Lite 2 - Build 14 (keep previous thumbnail until HDR done)
+- 4K video bitrate capped at 40 Mbps (width >= 3840)
+- Immersive mode off (4 setSystemUiVisibility sites + FLAG_FULLSCREEN cleared)
+- Status bar black on camera screen
+- Official defaults forced each launch (front+back: Pixel 3 XL, IMX363 Google noise modeler ON, Black Level 65)
+- Advanced settings entry removed (done at start of onResume, after onCreate lookups)
+- Thumbnail tap while HDR is processing: toast, then the (LG) gallery opens by itself when the photo is done
+- Photo picker accepts photos that are still processing (third-party gallery mode)
+- Thumbnail stays in the normal bottom bar (social-share relayout disabled)
+- Per-frame CaptureResult logging (APi2 info) disabled
+- Thumbnail keeps the previous photo while HDR runs; it changes only when processing is done (stock-camera behaviour)
+- Thumbnail tap while HDR runs opens the gallery at once on the newest finished photo (no in-app preview, no waiting)
+- Third-party gallery mode forced ON and portraits saved to DCIM/Camera (no separate album)
