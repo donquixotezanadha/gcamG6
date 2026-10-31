@@ -351,7 +351,7 @@ GALLERY_HELPER = """
     # Photo still processing: tell the user and wait for it (do NOT open the
     # gallery now, it would show an empty placeholder).
     iget-object v1, p0, Lczy;->j:Landroid/content/Context;
-    const-string v2, "HDR masih diproses. Galeri terbuka otomatis setelah selesai."
+    const-string v2, "HDR masih diproses, galeri terbuka otomatis setelah selesai"
     const/4 v3, 0x0
     invoke-static {v1, v2, v3}, Landroid/widget/Toast;->makeText(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;
     move-result-object v1
@@ -386,6 +386,16 @@ GALLERY_HELPER = """
     .locals 6
 
     :try_start_tick
+    # User pressed Back (blurred preview closed): stop waiting, allow next tap.
+    iget-object v0, p0, Lczy;->c:Lcom/google/android/apps/camera/filmstrip/transition/FilmstripTransitionLayout;
+    invoke-virtual {v0}, Landroid/view/View;->getVisibility()I
+    move-result v0
+    if-eqz v0, :tick_visible
+    const/4 v0, 0x0
+    iput-boolean v0, p0, Lczy;->f:Z
+    goto :tick_stop
+    :tick_visible
+
     invoke-virtual {p0, p1}, Lczy;->a(Lbiv;)Lbip;
     move-result-object v0
     if-eqz v0, :tick_stop
