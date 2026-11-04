@@ -1,0 +1,82 @@
+name: NGCam Build 25 - original APK base (G6)
+
+on:
+  push:
+    branches:
+      - build-25-original-base
+    paths:
+      - .github/workflows/build-ngcam-v25-original-base.yml
+      - patches/build25_patch.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Android build tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools build-tools;35.0.0
+
+      - name: Install Apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -o /tmp/apktool.jar
+          sudo mv /tmp/apktool.jar /usr/local/lib/apktool.jar
+          printf '#!/bin/sh\nexec java -jar /usr/local/lib/apktool.jar "$@"\n' | sudo tee /usr/local/bin/apktool >/dev/null
+          sudo chmod +x /usr/local/bin/apktool
+
+      - name: Download and verify the ORIGINAL APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 "https://github.com/donquixotezanadha/gcamG6/releases/download/apk-asli/NGCam_7.4.104-v2.0_eng.apk" -o original.apk
+          echo "2e66c50ab1dfb2c2eae7782f83137e87142b5adc5abea2693681b526aaa238f7  original.apk" | sha256sum -c
+
+      - name: Decode original APK (Smali only, original resources untouched)
+        run: apktool d -f -r original.apk -o decoded
+
+      - name: Apply Build 25 patches
+        run: python3 patches/build25_patch.py decoded
+
+      - name: Build APK
+        run: apktool b decoded -o unsigned.apk
+
+      - name: Align and sign with the fixed key
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=NGCam-Build25-Original-Base
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 unsigned.apk $OUT-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
+            --ks patches/ngcam-g6.jks --ks-pass pass:ngcamg6keep --key-pass pass:ngcamg6keep \
+            --out $OUT.apk $OUT-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose $OUT.apk
+          sha256sum $OUT.apk > SHA256SUMS.txt
+          {
+            cat patch-report.txt
+            echo
+            echo "Base: ORIGINAL NGCam 7.4.104 v2.0 (release apk-asli), nothing removed."
+            echo "Signed with the FIXED key patches/ngcam-g6.jks, so it updates Build 8-24 in place."
+            echo
+            cat SHA256SUMS.txt
+          } > BUILD-NOTES.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NGCam-Build25-Original-Base
+          path: |
+            NGCam-Build25-Original-Base.apk
+            BUILD-NOTES.txt
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
