@@ -79,7 +79,7 @@ jobs:
           OUT=GCam5.1-SelfieFlip
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 unsigned.apk $OUT-aligned.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
-            --ks patches/gcam5.jks --ks-alias gcam5 --ks-pass pass:gcam5keep --key-pass pass:gcam5keep \
+            --ks patches/gcam5.jks --ks-key-alias gcam5 --ks-pass pass:gcam5keep --key-pass pass:gcam5keep \
             --out $OUT.apk $OUT-aligned.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose $OUT.apk
           sha256sum $OUT.apk
