@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/build-gcam5-selfie-flip.yml
       - patches/gcam5_flip_patch.py
+      - patches/gcam5.jks
       - helper/**
   workflow_dispatch:
 
