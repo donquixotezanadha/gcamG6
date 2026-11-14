@@ -1,0 +1,81 @@
+name: GCam 5.1 - Selfie Flip (auto mirror front camera)
+
+on:
+  push:
+    branches:
+      - gcam5-selfie-flip
+    paths:
+      - .github/workflows/build-gcam5-selfie-flip.yml
+      - patches/gcam5_flip_patch.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Android build tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools build-tools;35.0.0
+
+      - name: Install Apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -o /tmp/apktool.jar
+          sudo mv /tmp/apktool.jar /usr/local/lib/apktool.jar
+          printf '#!/bin/sh\nexec java -jar /usr/local/lib/apktool.jar "$@"\n' | sudo tee /usr/local/bin/apktool >/dev/null
+          sudo chmod +x /usr/local/bin/apktool
+
+      - name: Download and verify the ORIGINAL GCam 5.1 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 "https://github.com/donquixotezanadha/gcamG6/releases/download/gcamv5/cstark27_GCam_5.1.018_24_v4.2t3.apk" -o original.apk
+          echo "b25f3400e48594e83d06ffa10e5aaaa06af9032055bfe1eef72630791f91e028  original.apk" | sha256sum -c
+
+      - name: Decode original APK (Smali only, original resources untouched)
+        run: apktool d -f -r original.apk -o decoded
+
+      - name: Apply selfie flip patch
+        run: python3 patches/gcam5_flip_patch.py decoded
+
+      - name: Build APK
+        run: apktool b decoded -o unsigned.apk
+
+      - name: Align and sign
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=GCam5.1-SelfieFlip
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 unsigned.apk $OUT-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
+            --ks patches/ngcam-g6.jks --ks-pass pass:ngcamg6keep --key-pass pass:ngcamg6keep \
+            --out $OUT.apk $OUT-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose $OUT.apk
+          sha256sum $OUT.apk > SHA256SUMS.txt
+          {
+            cat patch-report.txt
+            echo
+            echo "Base: cstark27 GCam 5.1.018_24 v4.2t3 (release gcamv5). Only change: front camera photos are saved mirrored (EXIF orientation)."
+            echo
+            cat SHA256SUMS.txt
+          } > BUILD-NOTES.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GCam5.1-SelfieFlip
+          path: |
+            GCam5.1-SelfieFlip.apk
+            BUILD-NOTES.txt
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
