@@ -5,9 +5,11 @@ How it works (the real pixels of the photo are mirrored, not just a flag):
   1. A small helper (helper/flip/Helper.java, built into classes2.dex by the workflow)
      remembers whether the camera that was just opened is the FRONT camera.
   2. Both places where the app calls CameraManager.openCamera() tell the helper.
-  3. The single place where every finished JPEG byte[] is handed to the saving code
-     (Lela;->a(JLekw;[BI)V) first passes the bytes through Helper.flip().
-     For the front camera this mirrors the picture left/right; for the back camera the
+  3. The factory that every saved photo goes through (Ldug.a, used by elp, dwm, dur, dvl
+     and cpg) first passes the finished JPEG bytes through Helper.flip(). A second hook
+     (Lela;->a(JLekw;[BI)V) covers JPEG byte arrays sent to the listeners. A marker inside
+     the JPEG makes sure a picture is never flipped twice.
+     For the front camera the picture is mirrored left/right; for the back camera the
      bytes are returned untouched.
 
 Every anchor must match exactly once, otherwise the build fails on purpose.
@@ -45,7 +47,27 @@ patch(
     "    invoke-virtual {v0, v1, v2, p0}, Landroid/hardware/camera2/CameraManager;->openCamera(Ljava/lang/String;Landroid/hardware/camera2/CameraDevice$StateCallback;Landroid/os/Handler;)V\n",
 )
 
-# 2. mirror every finished JPEG of the front camera before it is saved ----------
+# 2a. THE main save path: every photo that gets written to a file is built through
+#     Ldug.a(...) (callers: elp, dwm, dur, dvl, cpg). Its 3rd argument is the finished
+#     JPEG and its 5th argument is the clockwise rotation in degrees.
+patch(
+    "dug.smali",
+    ".method public static a(J[BLici;ILcom/google/android/libraries/camera/exif/ExifInterface;Lhab;Z)Ldug;\n"
+    "    .locals 10\n"
+    "\n"
+    "    new-instance v1, Ldug;\n",
+    ".method public static a(J[BLici;ILcom/google/android/libraries/camera/exif/ExifInterface;Lhab;Z)Ldug;\n"
+    "    .locals 10\n"
+    "\n"
+    "    invoke-static {p2, p4}, Lflip/Helper;->flip([BI)[B\n"
+    "\n"
+    "    move-result-object p2\n"
+    "\n"
+    "    new-instance v1, Ldug;\n",
+)
+
+# 2b. second hook: JPEG byte arrays that reach the listeners (thumbnail and similar flows).
+#     Pictures already flipped carry a marker and are skipped, so nothing is flipped twice.
 patch(
     "ela.smali",
     ".method public final a(JLekw;[BI)V\n"

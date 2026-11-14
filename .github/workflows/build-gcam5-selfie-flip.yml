@@ -78,17 +78,11 @@ jobs:
           OUT=GCam5.1-SelfieFlip
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 unsigned.apk $OUT-aligned.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
-            --ks patches/ngcam-g6.jks --ks-pass pass:ngcamg6keep --key-pass pass:ngcamg6keep \
+            --ks patches/gcam5.jks --ks-alias gcam5 --ks-pass pass:gcam5keep --key-pass pass:gcam5keep \
             --out $OUT.apk $OUT-aligned.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose $OUT.apk
-          sha256sum $OUT.apk > SHA256SUMS.txt
-          {
-            cat patch-report.txt
-            echo
-            echo "Base: cstark27 GCam 5.1.018_24 v4.2t3 (release gcamv5). Only change: front camera photos are mirrored (pixels), built from commit $GITHUB_SHA."
-            echo
-            cat SHA256SUMS.txt
-          } > BUILD-NOTES.txt
+          sha256sum $OUT.apk
+          cp patch-report.txt /tmp/patch-report.txt
 
       - name: Publish APK to a release (direct download link)
         shell: bash
@@ -97,9 +91,10 @@ jobs:
         run: |
           set -euo pipefail
           gh release delete gcam5-selfie-flip --yes --cleanup-tag || true
-          gh release create gcam5-selfie-flip GCam5.1-SelfieFlip.apk BUILD-NOTES.txt \
+          gh release delete gcam5-flip-apk --yes --cleanup-tag || true
+          gh release create gcam5-flip-apk GCam5.1-SelfieFlip.apk \
             --title "GCam 5.1 - Selfie Flip" \
-            --notes "GCam 5.1.018_24 v4.2t3 with one change: front camera photos are saved mirrored. Uninstall the old GCam first (different signature)." \
+            --notes "GCam 5.1.018_24 v4.2t3, one change: selfie (front camera) photos are saved mirrored like the preview. Signed with the fixed gcam5 key, so later builds install over this one." \
             --target "$GITHUB_SHA" \
             --prerelease
 
@@ -107,9 +102,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: GCam5.1-SelfieFlip
-          path: |
-            GCam5.1-SelfieFlip.apk
-            BUILD-NOTES.txt
-            SHA256SUMS.txt
+          path: GCam5.1-SelfieFlip.apk
           if-no-files-found: error
           retention-days: 30

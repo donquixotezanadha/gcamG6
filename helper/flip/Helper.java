@@ -46,6 +46,9 @@ public final class Helper {
             if ((jpeg[0] & 0xFF) != 0xFF || (jpeg[1] & 0xFF) != 0xD8) {
                 return jpeg;
             }
+            if (isFlipped(jpeg)) {
+                return jpeg;
+            }
             Bitmap src = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
             if (src == null) {
                 return jpeg;
@@ -72,8 +75,41 @@ public final class Helper {
         }
     }
 
+    // A small JPEG comment placed in every picture we flip, so that a picture which passes
+    // through more than one hook point is never flipped twice.
+    private static final byte[] TAG = {'G', 'C', 'F', 'L', 'I', 'P'};
+
     private static int segmentLength(byte[] b, int pos) {
         return ((b[pos + 2] & 0xFF) << 8) | (b[pos + 3] & 0xFF);
+    }
+
+    private static boolean isFlipped(byte[] b) {
+        int pos = 2;
+        while (pos + 4 <= b.length && (b[pos] & 0xFF) == 0xFF) {
+            int marker = b[pos + 1] & 0xFF;
+            boolean header = (marker >= 0xE0 && marker <= 0xEF) || marker == 0xFE;
+            if (!header) {
+                return false;
+            }
+            int len = segmentLength(b, pos);
+            if (len < 2 || pos + 2 + len > b.length) {
+                return false;
+            }
+            if (marker == 0xFE && len == 2 + TAG.length) {
+                boolean same = true;
+                for (int i = 0; i < TAG.length; i++) {
+                    if (b[pos + 4 + i] != TAG[i]) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (same) {
+                    return true;
+                }
+            }
+            pos += 2 + len;
+        }
+        return false;
     }
 
     /** Puts the EXIF/APPn segments of the original file at the start of the re-encoded file. */
@@ -96,9 +132,6 @@ public final class Helper {
             meta.write(orig, pos, 2 + len);
             pos += 2 + len;
         }
-        if (meta.size() == 0) {
-            return enc;
-        }
         int start = 2;
         if (enc.length > 6 && (enc[2] & 0xFF) == 0xFF && (enc[3] & 0xFF) == 0xE0) {
             start = 2 + 2 + segmentLength(enc, 2);
@@ -106,10 +139,16 @@ public final class Helper {
         if (start > enc.length) {
             return enc;
         }
-        ByteArrayOutputStream res = new ByteArrayOutputStream(enc.length + meta.size());
+        ByteArrayOutputStream res = new ByteArrayOutputStream(enc.length + meta.size() + 16);
         res.write(enc, 0, 2);
         byte[] m = meta.toByteArray();
         res.write(m, 0, m.length);
+        int len = 2 + TAG.length;
+        res.write(0xFF);
+        res.write(0xFE);
+        res.write((len >> 8) & 0xFF);
+        res.write(len & 0xFF);
+        res.write(TAG, 0, TAG.length);
         res.write(enc, start, enc.length - start);
         return res.toByteArray();
     }
