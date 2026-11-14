@@ -7,10 +7,11 @@ on:
     paths:
       - .github/workflows/build-gcam5-selfie-flip.yml
       - patches/gcam5_flip_patch.py
+      - helper/**
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -23,7 +24,7 @@ jobs:
       - name: Install Android build tools
         uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools build-tools;35.0.0
+          packages: platform-tools build-tools;35.0.0 platforms;android-34
 
       - name: Install Apktool
         shell: bash
@@ -41,14 +42,34 @@ jobs:
           curl -fL --retry 3 "https://github.com/donquixotezanadha/gcamG6/releases/download/gcamv5/cstark27_GCam_5.1.018_24_v4.2t3.apk" -o original.apk
           echo "b25f3400e48594e83d06ffa10e5aaaa06af9032055bfe1eef72630791f91e028  original.apk" | sha256sum -c
 
+      - name: Build the flip helper (Java to dex)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ANDROID_JAR="$ANDROID_HOME/platforms/android-34/android.jar"
+          mkdir -p helper-build/classes helper-build/dex
+          javac --release 8 -Xlint:-options -cp "$ANDROID_JAR" -d helper-build/classes helper/flip/Helper.java
+          "$ANDROID_HOME/build-tools/35.0.0/d8" --release --min-api 24 --lib "$ANDROID_JAR" \
+            --output helper-build/dex helper-build/classes/flip/*.class
+          ls -la helper-build/dex
+          test -s helper-build/dex/classes.dex
+
       - name: Decode original APK (Smali only, original resources untouched)
         run: apktool d -f -r original.apk -o decoded
 
       - name: Apply selfie flip patch
         run: python3 patches/gcam5_flip_patch.py decoded
 
-      - name: Build APK
-        run: apktool b decoded -o unsigned.apk
+      - name: Build APK and add the helper dex
+        shell: bash
+        run: |
+          set -euo pipefail
+          apktool b decoded -o unsigned.apk
+          mkdir -p inject
+          cp helper-build/dex/classes.dex inject/classes2.dex
+          (cd inject && zip -q ../unsigned.apk classes2.dex)
+          unzip -l unsigned.apk | grep -E 'classes[0-9]*\.dex'
+          unzip -p unsigned.apk classes2.dex | head -c 3 | grep -q dex
 
       - name: Align and sign
         shell: bash
@@ -64,10 +85,23 @@ jobs:
           {
             cat patch-report.txt
             echo
-            echo "Base: cstark27 GCam 5.1.018_24 v4.2t3 (release gcamv5). Only change: front camera photos are saved mirrored (EXIF orientation)."
+            echo "Base: cstark27 GCam 5.1.018_24 v4.2t3 (release gcamv5). Only change: front camera photos are mirrored (pixels), built from commit $GITHUB_SHA."
             echo
             cat SHA256SUMS.txt
           } > BUILD-NOTES.txt
+
+      - name: Publish APK to a release (direct download link)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release delete gcam5-selfie-flip --yes --cleanup-tag || true
+          gh release create gcam5-selfie-flip GCam5.1-SelfieFlip.apk BUILD-NOTES.txt \
+            --title "GCam 5.1 - Selfie Flip" \
+            --notes "GCam 5.1.018_24 v4.2t3 with one change: front camera photos are saved mirrored. Uninstall the old GCam first (different signature)." \
+            --target "$GITHUB_SHA" \
+            --prerelease
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
