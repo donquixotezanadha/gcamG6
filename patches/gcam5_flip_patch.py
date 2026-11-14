@@ -66,6 +66,29 @@ patch(
     "    new-instance v1, Ldug;\n",
 )
 
+# 2c. HDR+ (the default mode) saves through Ldym.a(Lgou;[BIII Exif), called by ekn, ekr,
+#     een and the refocus tasks. Its 2nd argument is the finished JPEG and its 5th (p4) is
+#     the clockwise rotation in degrees, same meaning as in Ldug.a above.
+patch(
+    "dym.smali",
+    ".method public static a(Lgou;[BIIILcom/google/android/libraries/camera/exif/ExifInterface;)Ljuw;\n"
+    "    .locals 6\n"
+    "    .annotation runtime Ljava/lang/Deprecated;\n"
+    "    .end annotation\n"
+    "\n"
+    "    new-instance v1, Ljava/io/ByteArrayInputStream;\n",
+    ".method public static a(Lgou;[BIIILcom/google/android/libraries/camera/exif/ExifInterface;)Ljuw;\n"
+    "    .locals 6\n"
+    "    .annotation runtime Ljava/lang/Deprecated;\n"
+    "    .end annotation\n"
+    "\n"
+    "    invoke-static {p1, p4}, Lflip/Helper;->flip([BI)[B\n"
+    "\n"
+    "    move-result-object p1\n"
+    "\n"
+    "    new-instance v1, Ljava/io/ByteArrayInputStream;\n",
+)
+
 # 2b. second hook: JPEG byte arrays that reach the listeners (thumbnail and similar flows).
 #     Pictures already flipped carry a marker and are skipped, so nothing is flipped twice.
 patch(
