@@ -89,6 +89,31 @@ patch(
     "    new-instance v1, Ljava/io/ByteArrayInputStream;\n",
 )
 
+# 3. Thumbnail embedded in the EXIF of saved photos. Gallery apps and file managers use it
+#    for their grid view, and it was made from the unflipped picture. For front camera
+#    photos the writer (Liet) is told that there is no embedded thumbnail, so those apps
+#    build their own from the (flipped) picture.
+patch(
+    "iet.smali",
+    "    iput-object p3, p0, Liet;->g:Lieh;\n",
+    "    sget-boolean v0, Lflip/Helper;->front:Z\n\n"
+    "    if-eqz v0, :flip_keep_thumb\n\n"
+    "    if-eqz p3, :flip_keep_thumb\n\n"
+    "    const/4 v0, 0x0\n\n"
+    "    iput-object v0, p3, Lieh;->b:[B\n\n"
+    "    :flip_keep_thumb\n"
+    "    iput-object p3, p0, Liet;->g:Lieh;\n",
+)
+
+# 4. HDR+ processing thumbnail inside the app (postview, already rotated upright).
+patch(
+    "cpp.smali",
+    "    invoke-interface {v8, v1}, Lear;->a(Landroid/graphics/Bitmap;)V\n",
+    "    invoke-static {v1}, Lflip/Helper;->mirror(Landroid/graphics/Bitmap;)Landroid/graphics/Bitmap;\n\n"
+    "    move-result-object v1\n\n"
+    "    invoke-interface {v8, v1}, Lear;->a(Landroid/graphics/Bitmap;)V\n",
+)
+
 # 2b. second hook: JPEG byte arrays that reach the listeners (thumbnail and similar flows).
 #     Pictures already flipped carry a marker and are skipped, so nothing is flipped twice.
 patch(

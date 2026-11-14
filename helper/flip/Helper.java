@@ -32,6 +32,21 @@ public final class Helper {
         }
     }
 
+    /** Mirrors an upright bitmap left/right (used for the in-app processing thumbnail). */
+    public static Bitmap mirror(Bitmap src) {
+        if (!front || src == null) {
+            return src;
+        }
+        try {
+            Matrix matrix = new Matrix();
+            matrix.postScale(-1f, 1f);
+            Bitmap out = Bitmap.createBitmap(src, 0, 0, src.getWidth(), src.getHeight(), matrix, false);
+            return out != null ? out : src;
+        } catch (Throwable ignored) {
+            return src;
+        }
+    }
+
     /**
      * @param jpeg    finished JPEG
      * @param degrees clockwise rotation (0, 90, 180, 270) that the app applies to show the raw
