@@ -41,9 +41,43 @@ public final class Helper {
             Matrix matrix = new Matrix();
             matrix.postScale(-1f, 1f);
             Bitmap out = Bitmap.createBitmap(src, 0, 0, src.getWidth(), src.getHeight(), matrix, false);
-            return out != null ? out : src;
+            if (out == null) {
+                return src;
+            }
+            return finishColor(out);
         } catch (Throwable ignored) {
             return src;
+        }
+    }
+
+    /**
+     * Selfie color finish (see Tone). Works in place on a small row buffer, so it needs no extra
+     * picture-sized memory. On any problem the bitmap is returned as it is.
+     */
+    private static Bitmap finishColor(Bitmap bmp) {
+        try {
+            Bitmap target = bmp;
+            if (!target.isMutable()) {
+                target = bmp.copy(Bitmap.Config.ARGB_8888, true);
+                if (target == null) {
+                    return bmp;
+                }
+            }
+            int w = target.getWidth();
+            int h = target.getHeight();
+            int[] row = new int[w * 16];
+            for (int y = 0; y < h; y += 16) {
+                int rows = Math.min(16, h - y);
+                target.getPixels(row, 0, w, 0, y, w, rows);
+                Tone.enhance(row, 0, w * rows);
+                target.setPixels(row, 0, w, 0, y, w, rows);
+            }
+            if (target != bmp) {
+                bmp.recycle();
+            }
+            return target;
+        } catch (Throwable ignored) {
+            return bmp;
         }
     }
 
@@ -78,6 +112,7 @@ public final class Helper {
             if (out != src) {
                 src.recycle();
             }
+            out = finishColor(out);
             ByteArrayOutputStream bos = new ByteArrayOutputStream(jpeg.length + 65536);
             boolean ok = out.compress(Bitmap.CompressFormat.JPEG, 98, bos);
             out.recycle();
